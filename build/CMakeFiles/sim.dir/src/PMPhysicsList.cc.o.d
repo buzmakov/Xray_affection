@@ -1,7 +1,6 @@
 CMakeFiles/sim.dir/src/PMPhysicsList.cc.o: \
- /home/iptch/geant4/Xray_affection/src/PMPhysicsList.cc \
- /usr/include/stdc-predef.h \
- /home/iptch/geant4/Xray_affection/include/PMPhysicsList.hh \
+ /home/iptch/geant4/new/src/PMPhysicsList.cc /usr/include/stdc-predef.h \
+ /home/iptch/geant4/new/include/PMPhysicsList.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4VModularPhysicsList.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4VPhysicsConstructor.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4ParticleTable.hh \
@@ -281,7 +280,6 @@ CMakeFiles/sim.dir/src/PMPhysicsList.cc.o: \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4GeomSplitter.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/geomwdefs.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4Region.icc \
- /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4EmStandardPhysics.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4EmLivermorePhysics.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4OpticalPhysics.hh \
  /home/iptch/geant4/geant4-v11.3.2-install/include/Geant4/G4OpticalParameters.hh \

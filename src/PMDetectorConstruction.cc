@@ -14,7 +14,7 @@ PMDetectorConstruction::~PMDetectorConstruction()
 {
 }
 
-G4VPhysicalVolume *PMDetectorConstruction::Construct()
+G4VPhysicalVolume* PMDetectorConstruction::Construct()
 {
     G4bool checkOverlaps = true;
 
@@ -25,20 +25,27 @@ G4VPhysicalVolume *PMDetectorConstruction::Construct()
         kStateGas, temperature, pressure);
 
 
-    G4NistManager *nist  = G4NistManager::Instance();
-    G4Material *worldMat = nist->FindOrBuildMaterial("Galactic");
-    G4Material *leadMat = nist->FindOrBuildMaterial(material);       
-    G4Material *detMat = nist->FindOrBuildMaterial("G4_SODIUM_IODIDE");
+    G4NistManager* nist = G4NistManager::Instance();
+    G4Material* worldMat = nist->FindOrBuildMaterial("Galactic");
+    G4Material* leadMat = nist->FindOrBuildMaterial(material);
+    G4Material* detMat = nist->FindOrBuildMaterial("G4_SODIUM_IODIDE");
 
+    // Оптические свойства для вакуума
+    G4MaterialPropertiesTable* vacMPT = new G4MaterialPropertiesTable();
+    const G4int nVac = 2;
+    G4double vacEnergies[] = { 1.0 * eV, 6.0 * eV };
+    G4double vacRindex[] = { 1.0, 1.0 };
+    vacMPT->AddProperty("RINDEX", vacEnergies, vacRindex, nVac);
+    worldMat->SetMaterialPropertiesTable(vacMPT);
 
     G4double xWorld = 1. * m;
     G4double yWorld = 1. * m;
     G4double zWorld = 1. * m;
 
-    G4Box *solidWorld = new G4Box("solidWorld", 0.5 * xWorld, 0.5 * yWorld, 0.5 * zWorld);
-    G4LogicalVolume *logicWorld = new G4LogicalVolume(solidWorld, worldMat, "logicalWorld");
-    G4VPhysicalVolume *physWorld = new G4PVPlacement(0, G4ThreeVector(0., 0., 0.), logicWorld, "physWorld", 0, false, 0);
-           
+    G4Box* solidWorld = new G4Box("solidWorld", 0.5 * xWorld, 0.5 * yWorld, 0.5 * zWorld);
+    G4LogicalVolume* logicWorld = new G4LogicalVolume(solidWorld, worldMat, "logicalWorld");
+    G4VPhysicalVolume* physWorld = new G4PVPlacement(0, G4ThreeVector(0., 0., 0.), logicWorld, "physWorld", 0, false, 0);
+
     G4double leadSize = 10.0 * cm;
 
     // Основное тело (сплошная пластина)
@@ -153,38 +160,146 @@ G4VPhysicalVolume *PMDetectorConstruction::Construct()
     G4LogicalVolume* logicLead = new G4LogicalVolume(solidLeadWithSlits, leadMat, "logicLead");
     G4VPhysicalVolume* physLead = new G4PVPlacement(0, G4ThreeVector(0., 0., 10. * cm), logicLead, "physLead", logicWorld, false, checkOverlaps);
 
-    // Визуализация
+    // Визуализация пластины
     G4VisAttributes* leadVisAtt = new G4VisAttributes(G4Color(1.0, 0.0, 0.0, 0.5));
     leadVisAtt->SetForceSolid(true);
     logicLead->SetVisAttributes(leadVisAtt);
 
+    // ========== СЦИНТИЛЛЯЦИОННАЯ ПЛАСТИНА ИЗ CsI ==========
+    G4double csiThickness = 0.5 * mm;
+    G4double csiSizeX = 10.0 * cm;
+    G4double csiSizeY = 5.0 * cm;
 
+    // Создаём материал CsI
+    G4Material* csiMat = new G4Material("CsI", 4.51 * g / cm3, 2);
+    csiMat->AddElement(nist->FindOrBuildElement("Cs"), 1);
+    csiMat->AddElement(nist->FindOrBuildElement("I"), 1);
 
+    // Добавляем оптические свойства
+    G4MaterialPropertiesTable* csiMPT = new G4MaterialPropertiesTable();
 
-    G4double detectorSize = 10.0 * cm;
+    const G4int nEnergies = 6;
+    G4double photonEnergies[nEnergies] = { 1.91 * eV, 2.07 * eV, 2.27 * eV, 2.48 * eV, 2.76 * eV, 3.10 * eV };
+    G4double refractiveIndex[nEnergies] = { 1.78, 1.79, 1.80, 1.81, 1.82, 1.83 };
+    csiMPT->AddProperty("RINDEX", photonEnergies, refractiveIndex, nEnergies);
 
-   /* G4Box *solidDetector = new G4Box("solidDetector", 0.005*m, 0.005*m, 0.001*m);
-    logicDetector = new G4LogicalVolume(solidDetector, worldMat, "logicDetector");
-        for (G4int i=0; i<50; i++)
-        {
-            for (G4int j=0; j<50; j++)
-            {
-                G4VPhysicalVolume *physDetector = new G4PVPlacement(0, G4ThreeVector(-0.2525*m+(i+0.5)*m/100, -0.2525*m+(j+0.5)*m/100 , 0.19 *m), logicDetector, "physDetector", logicWorld, false, j+i*100, checkOverlaps);
-                
-            }
+    csiMPT->AddConstProperty("SCINTILLATIONYIELD", 54000.0 / MeV);
+    csiMPT->AddConstProperty("SCINTILLATIONTIMECONSTANT1", 1000.0 * ns);
+    csiMPT->AddConstProperty("RESOLUTIONSCALE", 1.0);
 
-        }*/
+    const G4int nScint = 7;
+    G4double scintEnergies[nScint] = { 2.07 * eV, 2.18 * eV, 2.30 * eV, 2.43 * eV, 2.58 * eV, 2.76 * eV, 2.95 * eV };
+    G4double scintIntensity[nScint] = { 0.05, 0.2, 0.5, 0.8, 1.0, 0.4, 0.1 };
+    csiMPT->AddProperty("SCINTILLATIONCOMPONENT1", scintEnergies, scintIntensity, nScint);
 
-    G4Box* solidDetector = new G4Box("solidDetector", 0.5 * detectorSize, 0.25 * detectorSize, 0.01 * m);
-    logicDetector = new G4LogicalVolume(solidDetector, worldMat, "logicDetector");
-    G4VPhysicalVolume* physDetector = new G4PVPlacement(0, G4ThreeVector(0 * m , -0.025 * m, 0.19 * m), logicDetector, "physDetector", logicWorld, false, 1, checkOverlaps);
+    // Реалистичные значения для CsI
+    const G4int nAbs = 2;
+    G4double absEnergies[] = { 2.0 * eV, 3.1 * eV };
+    G4double absLength[] = { 3.0 * cm, 3.0 * cm };  // ~3 см для сцинтилляционного света
+    csiMPT->AddProperty("ABSLENGTH", absEnergies, absLength, nAbs);
+
+    csiMat->SetMaterialPropertiesTable(csiMPT);
+
+    // Создаём геометрию CsI
+    G4Box* solidCsI = new G4Box("solidCsI", 0.5 * csiSizeX, 0.5 * csiSizeY, 0.5 * csiThickness);
+    logicCsI = new G4LogicalVolume(solidCsI, csiMat, "logicCsI");
+
+    // Позиция CsI (центр сцинтиллятора)
+    G4double csiPosZ = 0.165 * m;
+    G4VPhysicalVolume* physCsI = new G4PVPlacement(0, G4ThreeVector(0. * m, -0.025 * m, csiPosZ),
+        logicCsI, "physCsI", logicWorld, false, 2, checkOverlaps);
+
+    // Визуализация CsI
+    G4VisAttributes* csiVisAtt = new G4VisAttributes(G4Color(0.0, 1.0, 0.0, 0.6));
+    csiVisAtt->SetForceSolid(true);
+    logicCsI->SetVisAttributes(csiVisAtt);
+
+    // ========== КРЕМНИЕВЫЙ ДЕТЕКТОР (ВПЛОТНУЮ К CsI) ==========
+    G4Material* siMat = nist->FindOrBuildMaterial("G4_Si");
+
+    // Оптические свойства для кремния
+    G4MaterialPropertiesTable* siMPT = new G4MaterialPropertiesTable();
+
+    const G4int nSiEnergies = 3;
+    G4double siEnergies[] = { 1.5 * eV, 2.5 * eV, 3.5 * eV };
+    G4double siRindex[] = { 3.5, 4.0, 5.0 };        // Показатель преломления кремния
+    G4double siAbsLength[] = { 500 * um, 50 * um, 10 * um }; // Длина поглощения
+
+    siMPT->AddProperty("RINDEX", siEnergies, siRindex, nSiEnergies);
+    siMPT->AddProperty("ABSLENGTH", siEnergies, siAbsLength, nSiEnergies);
+
+    // Квантовая эффективность кремния
+    G4double siEfficiency[] = { 0.5, 0.8, 0.9 };
+    siMPT->AddProperty("EFFICIENCY", siEnergies, siEfficiency, nSiEnergies);
+
+    siMat->SetMaterialPropertiesTable(siMPT);
+
+    // Создаем кремниевый детектор (такого же размера как CsI)
+    G4double detectorSizeX = 10.0 * cm;
+    G4double detectorSizeY = 5.0 * cm;
+    G4double detectorThickness = 0.5 * mm;
+
+    G4Box* solidDetector = new G4Box("solidDetector",
+        0.5 * detectorSizeX,
+        0.5 * detectorSizeY,
+        0.5 * detectorThickness);
+    logicDetector = new G4LogicalVolume(solidDetector, siMat, "logicDetector");
+
+    // ВАЖНО: Размещаем детектор БЕЗ ЗАЗОРА
+    // Задняя поверхность CsI находится на Z = csiPosZ + csiThickness/2
+    // Передняя поверхность детектора должна быть на этой же позиции
+    // Центр детектора = задняя поверхность CsI + detectorThickness/2
+    G4double detectorPosZ = csiPosZ + (csiThickness / 2.0) + (detectorThickness / 2.0);
+
+    G4VPhysicalVolume* physDetector = new G4PVPlacement(0,
+        G4ThreeVector(0. * m, -0.025 * m, detectorPosZ),
+        logicDetector, "physDetector", logicWorld, false, 1, checkOverlaps);
+
+    // Визуализация детектора
+    G4VisAttributes* siVisAtt = new G4VisAttributes(G4Color(0.0, 0.0, 1.0, 0.6));
+    siVisAtt->SetForceSolid(true);
+    logicDetector->SetVisAttributes(siVisAtt);
+
+    // ========== ОПТИЧЕСКАЯ ПОВЕРХНОСТЬ МЕЖДУ CsI И Si ==========
+// Создаем MaterialPropertiesTable для поверхности
+    G4MaterialPropertiesTable* surfaceMPT = new G4MaterialPropertiesTable();
+
+    const G4int nInterfEnergies = 3;
+    G4double interfEnergies[] = { 1.5 * eV, 2.5 * eV, 3.5 * eV };
+    G4double reflectivity[] = { 0.05, 0.05, 0.05 };   // 5% отражение
+    G4double transmittance[] = { 0.95, 0.95, 0.95 };  // 95% пропускание
+
+    // Добавляем свойства в MaterialPropertiesTable (а не напрямую в G4OpticalSurface)
+    surfaceMPT->AddProperty("REFLECTIVITY", interfEnergies, reflectivity, nInterfEnergies);
+    surfaceMPT->AddProperty("TRANSMITTANCE", interfEnergies, transmittance, nInterfEnergies);
+
+    // Создаем оптическую поверхность
+    G4OpticalSurface* csSiInterface = new G4OpticalSurface("CsI_Si_interface");
+    csSiInterface->SetType(dielectric_dielectric);
+    csSiInterface->SetModel(unified);
+    csSiInterface->SetFinish(polished);
+
+    // Присоединяем таблицу свойств к поверхности
+    csSiInterface->SetMaterialPropertiesTable(surfaceMPT);
+
+    // Применяем поверхность к границе между CsI и детектором
+    new G4LogicalBorderSurface("CsI_Si_border", physCsI, physDetector, csSiInterface);
 
     return physWorld;
 }
 
 void PMDetectorConstruction::ConstructSDandField()
 {
-    PMSensitiveDetector *sensDet = new PMSensitiveDetector("SensitveDetector");
-    logicDetector->SetSensitiveDetector(sensDet);
+    PMSensitiveDetector* sensDet = new PMSensitiveDetector("SensitveDetector");
+
+
+    if (logicDetector) {
+        logicDetector->SetSensitiveDetector(sensDet);
+        G4cout << "Main detector set as sensitive detector" << G4endl;
+    }
+    else {
+        G4cerr << "WARNING: logicDetector is null!" << G4endl;
+    }
+
     G4SDManager::GetSDMpointer()->AddNewDetector(sensDet);
 }

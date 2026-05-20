@@ -19,6 +19,9 @@
 #include "G4SDManager.hh"
 
 #include "PMSensitiveDetector.hh"
+#include "G4OpticalSurface.hh"
+#include "G4LogicalBorderSurface.hh"
+#include "G4LogicalSkinSurface.hh"
 
 class PMDetectorConstruction : public G4VUserDetectorConstruction
 {
@@ -30,6 +33,7 @@ public:
 
 private:
     G4LogicalVolume *logicDetector;
+    G4LogicalVolume* logicCsI = nullptr;  // Добавить эту строку
 
     virtual void ConstructSDandField();
 };

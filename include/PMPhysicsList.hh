@@ -1,14 +1,13 @@
-#ifndef PMPHYSICSLISTS_HH
-#define PMPHYSICSLISTS_HH
+#ifndef PMPhysicsList_h
+#define PMPhysicsList_h 1
 
 #include "G4VModularPhysicsList.hh"
-#include "G4EmStandardPhysics.hh"
 
 class PMPhysicsList : public G4VModularPhysicsList
 {
 public:
     PMPhysicsList();
-    ~PMPhysicsList();
+    virtual ~PMPhysicsList();
 };
 
 #endif

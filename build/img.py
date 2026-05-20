@@ -1,182 +1,238 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm, LinearSegmentedColormap
+from scipy.ndimage import gaussian_filter
+import gc
 
-# --- Параметры эксперимента ---
-GRID_MIN = -5.0          # Минимальная координата сетки (см)
-GRID_MAX = 5.0           # Максимальная координата сетки (см)
-STEP = 10/99               # Шаг сетки (см)
-PHOTONS_PER_POSITION = 500  # Количество фотонов, испущенных из каждой позиции
-INITIAL_ENERGY = 80.0    # Начальная энергия фотонов (кэВ)
+# ------------------- Параметры -------------------
+GRID_MIN = -5.0
+GRID_MAX = 5.0
+NUM_BINS = 200
+PHOTONS_PER_POSITION = 3
+INITIAL_ENERGY = 30.0
+SCINTILLATION_YIELD = 54000
 
-# --- Чтение данных из файла ---
-# Файл имеет заголовок, разделитель - табуляция (пробелы)
-df = pd.read_csv('hits_data.csv', delimiter='\t')
+# ------------------- Чтение (простое и надежное) -------------------
+def read_hits_file(filename):
+    data = []
+    
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    
+    # Проверяем первую строку на наличие заголовка
+    first_line = lines[0].strip()
+    start_row = 0
+    
+    if 'Energy_eV' in first_line:
+        start_row = 1  # Пропускаем заголовок
+    
+    # Парсим каждую строку
+    for line in lines[start_row:]:
+        if not line.strip():
+            continue
+        
+        parts = line.strip().split('\t')
+        
+        # Нам нужны столбцы: Energy_eV, PosX_cm, PosY_cm, Type, EventID
+        # Но может быть лишний столбец между PosY_cm и Type
+        if len(parts) >= 5:
+            energy = float(parts[0])
+            pos_x = float(parts[1])
+            pos_y = float(parts[2])
+            
+            # Определяем, где находится Type и EventID
+            if len(parts) == 5:
+                # Формат: Energy, PosX, PosY, Type, EventID
+                type_val = parts[3]
+                event_id = int(parts[4])
+            elif len(parts) == 6:
+                # Формат: Energy, PosX, PosY, Extra, Type, EventID
+                type_val = parts[4]
+                event_id = int(parts[5])
+            else:
+                # Пробуем найти Type по ключевому слову
+                type_val = None
+                event_id = None
+                for i, part in enumerate(parts):
+                    if 'optical_photon' in part or 'scattered' in part:
+                        type_val = part
+                        if i + 1 < len(parts):
+                            event_id = int(parts[i + 1])
+                        break
+            
+            if type_val is not None:
+                data.append([energy, pos_x, pos_y, type_val.lower(), event_id])
+    
+    # Создаем DataFrame
+    df = pd.DataFrame(data, columns=['Energy_eV', 'PosX_cm', 'PosY_cm', 'Type', 'EventID'])
+    return df
 
-# Проверяем, что данные загрузились
-print(f"Загружено записей: {len(df)}")
-print(f"Первые 5 строк:\n{df.head()}")
+print("Чтение файла...")
+df = read_hits_file('hits_data.csv')
+print(f"Загружено записей: {len(df):,}")
 
-# --- Группировка и анализ данных ---
-# Группируем по координатам X и Y
-grouped = df.groupby(['PosX_cm', 'PosY_cm'])
+if len(df) == 0:
+    print("ОШИБКА: Не удалось прочитать данные из файла!")
+    exit(1)
 
-# Для каждой позиции считаем количество попавших фотонов и сумму их энергий
-hit_counts = grouped.size().rename('hit_count')
-energy_sum = grouped['Energy_keV'].sum().rename('energy_sum')
+# Фильтрация - только оптические фотоны
+df_optical = df[df['Type'] == 'optical_photon'].copy()
+df_optical = df_optical[df_optical['Energy_eV'] < 10].copy()
+print(f"Оптических фотонов: {len(df_optical):,}")
 
-# Объединяем результаты в один DataFrame
-stats = pd.concat([hit_counts, energy_sum], axis=1).reset_index()
+# Статистика событий
+if 'EventID' in df_optical.columns and len(df_optical) > 0:
+    photons_per_event = df_optical.groupby('EventID').size()
+    theoretical_max = INITIAL_ENERGY * SCINTILLATION_YIELD / 1000
+    print(f"\nСтатистика по событиям:")
+    print(f"  Всего событий: {len(photons_per_event):,}")
+    print(f"  Фотонов на событие: мин={photons_per_event.min()}, "
+          f"ср={photons_per_event.mean():.0f}, макс={photons_per_event.max()}")
+    print(f"  Теоретический максимум: {theoretical_max:.0f}")
 
-# Добавляем колонку с теоретическим ожидаемым количеством фотонов (без ослабления)
-stats['expected_count'] = PHOTONS_PER_POSITION
+del df
+gc.collect()
 
-# Добавляем колонку с коэффициентом пропускания (Transmission)
-# Transmission = (попавшие фотоны) / (испущенные фотоны)
-stats['transmission'] = stats['hit_count'] / PHOTONS_PER_POSITION
+# ------------------- БИНИРОВАНИЕ -------------------
+print(f"\nБинирование координат в сетку {NUM_BINS}x{NUM_BINS}...")
+print(f"Обрабатывается {len(df_optical):,} фотонов...")
 
-# Добавляем колонку с измеренным ослаблением (Attenuation = -ln(Transmission))
-# Для позиций, где фотоны не попали, Transmission = 0, Attenuation = inf.
-# Заменим inf на большое число для визуализации
-with np.errstate(divide='ignore'):
-    stats['attenuation'] = -np.log(stats['transmission'])
-stats['attenuation'].replace([np.inf, -np.inf], np.nan, inplace=True)
+if len(df_optical) == 0:
+    print("ОШИБКА: Нет оптических фотонов для обработки!")
+    exit(1)
 
-# --- Создание сетки для изображения ---
-# Определяем координаты всех позиций сетки
-x_coords = np.arange(GRID_MIN, GRID_MAX + STEP/2, STEP)
-y_coords = np.arange(GRID_MIN, GRID_MAX + STEP/2, STEP)
-X_grid, Y_grid = np.meshgrid(x_coords, y_coords, indexing='ij')
+optical_counts, x_edges, y_edges = np.histogram2d(
+    df_optical['PosX_cm'].values,
+    df_optical['PosY_cm'].values,
+    bins=NUM_BINS,
+    range=[[GRID_MIN, GRID_MAX], [GRID_MIN, GRID_MAX]]
+)
 
-# Создаём массивы для значений на сетке
-hit_grid = np.zeros_like(X_grid, dtype=float)
-transmission_grid = np.zeros_like(X_grid, dtype=float)
-attenuation_grid = np.full_like(X_grid, np.nan, dtype=float)
+print(f"Готово!")
+print(f"  Ненулевых пикселей: {np.sum(optical_counts > 0):,}")
+print(f"  Минимум фотонов: {np.min(optical_counts):.0f}")
+print(f"  Максимум фотонов: {int(np.max(optical_counts))}")
 
-# Заполняем сетку данными из статистики
-for _, row in stats.iterrows():
-    ix = np.abs(x_coords - row['PosX_cm']).argmin()
-    iy = np.abs(y_coords - row['PosY_cm']).argmin()
-    hit_grid[ix, iy] = row['hit_count']
-    transmission_grid[ix, iy] = row['transmission']
-    attenuation_grid[ix, iy] = row['attenuation']
+del df_optical
+gc.collect()
 
-# --- Создание рентгеновской цветовой карты (черно-белая с инверсией) ---
-# Медицинские рентгеновские снимки: плотные ткани (высокое ослабление) - белые,
-# воздух/мягкие ткани (низкое ослабление) - черные
-xray_cmap = LinearSegmentedColormap.from_list('xray', ['black', 'gray', 'white'])
-# Альтернатива: инвертированная grayscale
-xray_cmap_inv = 'gray_r'  # _r означает инверсию (черный->белый)
+# ------------------- ПОСТОБРАБОТКА -------------------
+print("\nПостобработка...")
 
-# Для цветных рентгеновских снимков (псевдоцвета как в медицинских сканерах)
-medical_cmap = LinearSegmentedColormap.from_list('medical', ['black', '#4a0e4e', '#8b3a62', '#d96c6c', '#f5c4a3', 'white'])
+# 1. Нормализация интенсивности
+signal_intensity = optical_counts / PHOTONS_PER_POSITION
 
-# --- Визуализация ---
-fig, axes = plt.subplots(2, 2, figsize=(14, 11))
-fig.suptitle('Рентгеновское изображение (40 кэВ) - анализ пропускания', fontsize=16, fontweight='bold')
+# 2. Заменяем нули на очень маленькое значение (чтобы избежать -inf)
+signal_intensity[signal_intensity == 0] = 1e-6
 
-# 1. Карта количества зарегистрированных фотонов (рентгеновский стиль)
-im1 = axes[0, 0].imshow(hit_grid.T, origin='lower', extent=[GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX],
-                        cmap=xray_cmap_inv, interpolation='nearest')
-axes[0, 0].set_title('Детектированные фотоны (рентгеновский режим)', fontsize=12)
-axes[0, 0].set_xlabel('X, см')
-axes[0, 0].set_ylabel('Y, см')
-plt.colorbar(im1, ax=axes[0, 0], label='Количество фотонов')
+# 3. Вычисляем ослабление
+attenuation = -np.log(signal_intensity)
 
-# 2. Карта коэффициента пропускания
-im2 = axes[0, 1].imshow(transmission_grid.T, origin='lower', extent=[GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX],
-                        cmap='viridis', vmin=0, vmax=1, interpolation='nearest')
-axes[0, 1].set_title('Коэффициент пропускания (I/I₀)', fontsize=12)
-axes[0, 1].set_xlabel('X, см')
-axes[0, 1].set_ylabel('Y, см')
-plt.colorbar(im2, ax=axes[0, 1], label='Пропускание')
+# 4. Обрезаем экстремальные значения (процентили для хорошего контраста)
+p_low = 5   # Нижний процентиль
+p_high = 95 # Верхний процентиль
 
-# 3. Классическое рентгеновское изображение (ослабление, черно-белое)
-# Нормализуем значения для лучшего контраста
-attenuation_clean = attenuation_grid.copy()
-attenuation_max = np.nanpercentile(attenuation_clean, 99)  # Игнорируем выбросы
-attenuation_clean = np.clip(attenuation_clean, 0, attenuation_max)
+vmin = np.percentile(attenuation[~np.isnan(attenuation)], p_low)
+vmax = np.percentile(attenuation[~np.isnan(attenuation)], p_high)
 
-im3 = axes[1, 0].imshow(attenuation_clean.T, origin='lower', extent=[GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX],
-                        cmap=xray_cmap_inv, interpolation='nearest', vmin=0, vmax=attenuation_max)
-axes[1, 0].set_title('Рентгеновский снимок (ослабление) - µ·x', fontsize=12, fontweight='bold')
-axes[1, 0].set_xlabel('X, см')
-axes[1, 0].set_ylabel('Y, см')
-plt.colorbar(im3, ax=axes[1, 0], label='Ослабление, -ln(I/I₀)')
+print(f"Диапазон ослабления: [{vmin:.2f}, {vmax:.2f}]")
 
-# Добавляем пояснение
-axes[1, 0].text(0.02, 0.98, 'Белый = высокая плотность\nЧерный = низкая плотность', 
-                transform=axes[1, 0].transAxes, fontsize=9,
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+# 5. Нормируем в [0, 1]
+attenuation_norm = np.clip((attenuation - vmin) / (vmax - vmin), 0, 1)
 
-# 4. Рентгеновское изображение в улучшенном контрасте (медицинский стиль)
-# Применяем гамма-коррекцию для лучшей видимости деталей
-attenuation_gamma = np.power(attenuation_clean / attenuation_max, 0.5)  # Гамма 0.5
-im4 = axes[1, 1].imshow(attenuation_gamma.T, origin='lower', extent=[GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX],
-                        cmap=xray_cmap_inv, interpolation='bilinear')
-axes[1, 1].set_title('Рентгеновский снимок (улучшенный контраст)', fontsize=12)
-axes[1, 1].set_xlabel('X, см')
-axes[1, 1].set_ylabel('Y, см')
-plt.colorbar(im4, ax=axes[1, 1], label='Нормированное ослабление')
+# 6. Гамма-коррекция для улучшения контраста
+gamma = 0.5
+attenuation_gamma = np.power(attenuation_norm, gamma)
 
+# 7. Сглаживание
+print("Сглаживание...")
+attenuation_smoothed = gaussian_filter(attenuation_gamma, sigma=1.0)
+
+# ------------------- ВИЗУАЛИЗАЦИЯ -------------------
+print("Визуализация...")
+extent = [GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX]
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+
+# 1. Сырые counts
+im1 = axes[0,0].imshow(optical_counts.T, origin='lower', extent=extent, 
+                        cmap='hot', interpolation='nearest')
+axes[0,0].set_title('Количество фотонов (сырые данные)')
+axes[0,0].set_xlabel('X, см')
+axes[0,0].set_ylabel('Y, см')
+plt.colorbar(im1, ax=axes[0,0], label='Количество фотонов')
+
+# 2. Интенсивность (лог-шкала)
+im2 = axes[0,1].imshow(np.log10(optical_counts.T + 1), origin='lower', extent=extent, 
+                        cmap='viridis', interpolation='nearest')
+axes[0,1].set_title('Логарифм количества фотонов')
+axes[0,1].set_xlabel('X, см')
+axes[0,1].set_ylabel('Y, см')
+plt.colorbar(im2, ax=axes[0,1], label='log10(фотонов)')
+
+# 3. Ослабление (нормализованное)
+im3 = axes[1,0].imshow(attenuation_gamma.T, origin='lower', extent=extent, 
+                        cmap='gray_r', interpolation='bilinear', vmin=0, vmax=1)
+axes[1,0].set_title('Рентгеновское изображение (ослабление)')
+axes[1,0].set_xlabel('X, см')
+axes[1,0].set_ylabel('Y, см')
+plt.colorbar(im3, ax=axes[1,0], label='Относительное ослабление')
+
+# 4. Сглаженное изображение
+im4 = axes[1,1].imshow(attenuation_smoothed.T, origin='lower', extent=extent, 
+                        cmap='gray_r', interpolation='bilinear', vmin=0, vmax=1)
+axes[1,1].set_title('Рентгеновское изображение (сглаженное)')
+axes[1,1].set_xlabel('X, см')
+axes[1,1].set_ylabel('Y, см')
+plt.colorbar(im4, ax=axes[1,1], label='Относительное ослабление')
+
+plt.suptitle(f'Сцинтилляционный детектор CsI, E={INITIAL_ENERGY} кэВ', fontsize=14)
 plt.tight_layout()
+plt.savefig('xray_image.png', dpi=300, bbox_inches='tight')
 plt.show()
 
-# --- Дополнительное окно с увеличенным рентгеновским изображением ---
-fig2, ax2 = plt.subplots(1, 1, figsize=(10, 9))
-fig2.suptitle('Рентгеновское изображение (40 кэВ)', fontsize=16, fontweight='bold')
+# ------------------- ОТДЕЛЬНОЕ ИЗОБРАЖЕНИЕ ДЛЯ СОХРАНЕНИЯ -------------------
+print("\nСоздание финального изображения...")
+fig_final, ax_final = plt.subplots(1, 1, figsize=(12, 10))
 
-# Улучшенное изображение с медицинской цветовой гаммой
-attenuation_clean2 = attenuation_grid.copy()
-attenuation_max2 = np.nanpercentile(attenuation_clean2, 99.5)
-attenuation_clean2 = np.clip(attenuation_clean2, 0, attenuation_max2)
+im_final = ax_final.imshow(attenuation_smoothed.T, origin='lower', extent=extent, 
+                            cmap='gray_r', interpolation='bilinear', vmin=0, vmax=1)
+ax_final.set_xlabel('X, см', fontsize=12)
+ax_final.set_ylabel('Y, см', fontsize=12)
+ax_final.set_title(f'Рентгеновский снимок (CsI сцинтиллятор, {INITIAL_ENERGY} кэВ)', fontsize=14)
 
-# Применяем различную обработку для лучшего визуального восприятия
-attenuation_processed = np.power(attenuation_clean2 / attenuation_max2, 0.45)
-
-im_big = ax2.imshow(attenuation_processed.T, origin='lower', 
-                    extent=[GRID_MIN, GRID_MAX, GRID_MIN, GRID_MAX],
-                    cmap='gray_r', interpolation='bilinear')
-ax2.set_xlabel('X, см', fontsize=12)
-ax2.set_ylabel('Y, см', fontsize=12)
-ax2.grid(False)
-
-# Добавляем цветовую шкалу
-cbar = plt.colorbar(im_big, ax=ax2, fraction=0.046, pad=0.04)
-cbar.set_label('Относительное ослабление (µ·x)', fontsize=10)
-
-# Добавляем информационную подпись
-ax2.text(0.02, 0.02, f'Энергия: {INITIAL_ENERGY} кэВ\nФотонов на точку: {PHOTONS_PER_POSITION}', 
-         transform=ax2.transAxes, fontsize=9, verticalalignment='bottom',
-         bbox=dict(boxstyle='round', facecolor='black', alpha=0.6, color='white'))
+cbar = plt.colorbar(im_final, ax=ax_final, fraction=0.046, pad=0.04)
+cbar.set_label('Относительное ослабление', fontsize=10)
 
 plt.tight_layout()
+plt.savefig('xray_final.png', dpi=300, bbox_inches='tight', facecolor='black')
 plt.show()
 
-# --- Вывод статистики ---
-print("\n" + "="*50)
-print("СТАТИСТИКА ОБРАБОТКИ")
-print("="*50)
-print(f"Всего обработано позиций: {len(stats)}")
-print(f"Позиций без зарегистрированных фотонов: {(stats['hit_count'] == 0).sum()}")
-print(f"Средний коэффициент пропускания: {stats['transmission'].mean():.4f}")
-print(f"Медианный коэффициент пропускания: {stats['transmission'].median():.4f}")
-print(f"Диапазон ослабления: [{np.nanmin(attenuation_grid):.2f}, {np.nanmax(attenuation_grid):.2f}]")
+print("\n✓ Сохранено:")
+print("  - xray_image.png (четыре графика)")
+print("  - xray_final.png (финальное изображение)")
+print("  - xray_data.npz (данные)")
 
-# Определяем, есть ли явные "тени" (области с высоким ослаблением)
-high_attenuation = stats[stats['attenuation'] > 1.0]
-if not high_attenuation.empty:
-    print(f"\nОбласти с высоким ослаблением (>1.0): {len(high_attenuation)} позиций")
-    print(high_attenuation[['PosX_cm', 'PosY_cm', 'transmission', 'attenuation']].head(10))
-else:
-    print("\nОбластей с высоким ослаблением не обнаружено")
+# Сохранение данных
+np.savez('xray_data.npz',
+         counts=optical_counts,
+         attenuation=attenuation_smoothed,
+         bins_x=x_edges,
+         bins_y=y_edges)
 
-# Сохраняем результаты в CSV (опционально)
-stats.to_csv('processed_hits.csv', index=False)
-print("\n✓ Результаты сохранены в 'processed_hits.csv'")
+# ------------------- ДИАГНОСТИКА -------------------
+print("\n" + "="*60)
+print("ДИАГНОСТИКА")
+print("="*60)
+print(f"Размер сетки: {NUM_BINS} x {NUM_BINS} = {NUM_BINS*NUM_BINS:,} пикселей")
+print(f"Пикселей с фотонами: {np.sum(optical_counts > 0):,}")
+print(f"Пустых пикселей: {np.sum(optical_counts == 0):,}")
+print(f"Всего фотонов: {int(np.sum(optical_counts)):,}")
+print(f"Среднее фотонов на пиксель: {np.mean(optical_counts):.2f}")
+print(f"Максимум фотонов: {int(np.max(optical_counts))}")
 
-# Сохраняем изображение в файл (опционально)
-plt.figure(fig2.number)
-plt.savefig('xray_image.png', dpi=300, bbox_inches='tight', facecolor='black')
-print("✓ Рентгеновское изображение сохранено в 'xray_image.png'")
+# Проверка распределения
+if np.max(optical_counts) > 0:
+    print(f"\nРаспределение интенсивности:")
+    print(f"  Пикселей с <10% от максимума: {np.sum(optical_counts < 0.1 * np.max(optical_counts)):,}")
+    print(f"  Пикселей с >90% от максимума: {np.sum(optical_counts > 0.9 * np.max(optical_counts)):,}")
