@@ -5,6 +5,8 @@
 
 G4double leadThickness = 100. * um; //изменение толщины пластины в мкм
 G4String material = "G4_Cu"; //Объявление материала
+G4double csiThickness = 50. * um;   // толщина сцинтиллятора CsI
+G4double detectorThickness = 0.5 * mm; // толщина Si детектора
 
 PMDetectorConstruction::PMDetectorConstruction()
 {
@@ -71,7 +73,7 @@ G4VPhysicalVolume* PMDetectorConstruction::Construct()
     logicLead->SetVisAttributes(leadVisAtt);
 
     // ========== СЦИНТИЛЛЯЦИОННАЯ ПЛАСТИНА ИЗ CsI ==========
-    G4double csiThickness = 50 * um;
+    // csiThickness — глобальная переменная (объявлена в заголовке)
     G4double csiSizeX = 10.0/scale * cm;
     G4double csiSizeY = 5.0/scale * cm;
 
@@ -168,7 +170,7 @@ G4VPhysicalVolume* PMDetectorConstruction::Construct()
     // Создаем кремниевый детектор (такого же размера как CsI)
     G4double detectorSizeX = 10.0/scale * cm;
     G4double detectorSizeY = 5.0/scale * cm;
-    G4double detectorThickness = 0.5 * mm;
+    // detectorThickness — глобальная переменная (объявлена в заголовке)
 
     G4Box* solidDetector = new G4Box("solidDetector",
         0.5 * detectorSizeX,

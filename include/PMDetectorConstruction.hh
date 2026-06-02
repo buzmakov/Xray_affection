@@ -33,12 +33,14 @@ public:
 
 private:
     G4LogicalVolume *logicDetector;
-    G4LogicalVolume* logicCsI = nullptr;  // Добавить эту строку
+    G4LogicalVolume* logicCsI = nullptr;  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 
     virtual void ConstructSDandField();
 };
 
 extern G4double leadThickness;
 extern G4String material;
+extern G4double csiThickness;
+extern G4double detectorThickness;
 
 #endif

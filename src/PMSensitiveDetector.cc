@@ -96,13 +96,12 @@ G4bool PMSensitiveDetector::ProcessHits(G4Step* aStep, G4TouchableHistory*)
                 << " Energy: " << track->GetKineticEnergy() / eV << " eV" << G4endl;
         }*/
 
-        // Записываем информацию о фотоне в файл
+        // Записываем информацию о фотоне в файл (5 колонок: Energy_eV, PosX_cm, PosY_cm, Type, EventID)
         if (outFile.is_open()) {
             std::lock_guard<std::mutex> lock(fileMutex);
             outFile << track->GetKineticEnergy() / eV << "\t"
                 << hitPos.x() / cm << "\t"
                 << hitPos.y() / cm << "\t"
-                << hitPos.z() / cm << "\t"
                 << "optical_photon\t"
                 << G4RunManager::GetRunManager()->GetCurrentEvent()->GetEventID() << std::endl;
         }

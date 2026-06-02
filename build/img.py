@@ -236,13 +236,20 @@ print("="*60)
 results_files = []
 for f in os.listdir(RESULTS_DIR):
     if f.startswith('hits_data_') and f.endswith('.csv'):
-        # Извлекаем толщину из имени файла
+        # Извлекаем толщину из имени файла: hits_data_100um.csv → 100
         thickness_str = f.replace('hits_data_', '').replace('.csv', '').replace('um', '')
         try:
             thickness_um = int(thickness_str)
             results_files.append((thickness_um, os.path.join(RESULTS_DIR, f)))
         except ValueError:
             continue
+
+# Fallback: если hits_data.csv лежит напрямую в results/ (запуск без Docker или один прогон)
+if not results_files:
+    plain_csv = os.path.join(RESULTS_DIR, 'hits_data.csv')
+    if os.path.exists(plain_csv):
+        print(f"[INFO] Найден hits_data.csv без суффикса толщины — используем как 100 мкм по умолчанию")
+        results_files.append((100, plain_csv))
 
 # Сортируем по толщине
 results_files.sort(key=lambda x: x[0])

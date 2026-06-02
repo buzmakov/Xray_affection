@@ -13,7 +13,7 @@
 
 int main(int argc, char** argv)
 {
-    G4UIExecutive *ui;
+    G4UIExecutive *ui = nullptr;
 
     #ifdef G4MULTITHREADED
         G4MTRunManager *runManager = new G4MTRunManager;

@@ -7,25 +7,39 @@
 #include "G4AutoLock.hh"
 #include <iostream>
 
-std::atomic<G4int> PMPrimaryGenerator::fGlobalPixelX(0);
-std::atomic<G4int> PMPrimaryGenerator::fGlobalPixelY(0);
-std::atomic<G4int> PMPrimaryGenerator::fParticlesEmittedInCurrentPixel(0);
-const G4int PMPrimaryGenerator::fParticlesPerPixel = 3;  // N частиц на точку
-const G4int PMPrimaryGenerator::fGridSize = 100;
+std::atomic<G4int>  PMPrimaryGenerator::fGlobalPixelX(0);
+std::atomic<G4int>  PMPrimaryGenerator::fGlobalPixelY(0);
+std::atomic<G4int>  PMPrimaryGenerator::fParticlesEmittedInCurrentPixel(0);
 std::atomic<G4bool> PMPrimaryGenerator::fIsFinished(false);
+
+// РџР°СЂР°РјРµС‚СЂС‹ СЃРєР°РЅРёСЂРѕРІР°РЅРёСЏ вЂ” Р·Р°РґР°СЋС‚СЃСЏ С‡РµСЂРµР· РјР°РєСЂРѕСЃ РєРѕРјР°РЅРґР°РјРё:
+//   /gun/gridSize <N>           в†’ NГ—N РїРёРєСЃРµР»РµР№ (СЂР°Р·СЂРµС€РµРЅРёРµ)
+//   /gun/particlesPerPixel <N>  в†’ РєРІР°РЅС‚РѕРІ РЅР° РїРёРєСЃРµР»СЊ (СЃС‚Р°С‚РёСЃС‚РёРєР°)
+// РС‚РѕРіРѕ СЃРѕР±С‹С‚РёР№ = gridSize * gridSize * particlesPerPixel
+// Р—РЅР°С‡РµРЅРёРµ beamOn РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ >= СЌС‚РѕРіРѕ С‡РёСЃР»Р° (СЂРµРєРѕРјРµРЅРґСѓРµС‚СЃСЏ СЃ Р·Р°РїР°СЃРѕРј 2Г—)
+G4int PMPrimaryGenerator::fParticlesPerPixel = 3;
+G4int PMPrimaryGenerator::fGridSize          = 100;
 
 G4double energy = 0.;
 G4Mutex pixelMutex;
+
+void PMPrimaryGenerator::ResetGrid()
+{
+    G4AutoLock lock(&pixelMutex);
+    fGlobalPixelX                  = 0;
+    fGlobalPixelY                  = 0;
+    fParticlesEmittedInCurrentPixel = 0;
+    fIsFinished                    = false;
+}
 
 PMPrimaryGenerator::PMPrimaryGenerator()
 {
     fParticleGun = new G4ParticleGun(1);
 
-    // Particle type
+    // РўРёРї С‡Р°СЃС‚РёС†С‹: РіР°РјРјР°-РєРІР°РЅС‚
     G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
     G4ParticleDefinition* particle = particleTable->FindParticle("gamma");
 
-    // Начальная настройка (временная)
     G4ThreeVector pos(0., 0., 0.);
     G4ThreeVector mom(0., 0., 1.);
 
@@ -33,6 +47,8 @@ PMPrimaryGenerator::PMPrimaryGenerator()
     fParticleGun->SetParticleMomentumDirection(mom);
     fParticleGun->SetParticleEnergy(30. * keV);
     fParticleGun->SetParticleDefinition(particle);
+    // UI-РјРµСЃСЃРµРЅРґР¶РµСЂ РґР»СЏ /gun/gridSize Рё /gun/particlesPerPixel
+    // СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚СЃСЏ РІ PMRunAction (master-РїРѕС‚РѕРє), Р° РЅРµ Р·РґРµСЃСЊ.
 }
 
 PMPrimaryGenerator::~PMPrimaryGenerator()
@@ -56,18 +72,18 @@ void PMPrimaryGenerator::SetSourcePosition(G4double x, G4double y)
     fParticleGun->SetParticlePosition(pos);
 }
 
-// Функция для получения центра бина детектора по индексу
-// Совпадает с формулой из SensitiveDetector
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ SensitiveDetector
 G4double GetDetectorBinCenter(int index, G4double size, int numBins)
 {
-    G4double step = (2.0 * size) / numBins;  // step = 10 см / 25 = 0.4 см
+    G4double step = (2.0 * size) / numBins;  // step = 10 пїЅпїЅ / 25 = 0.4 пїЅпїЅ
     G4double position = -size + (index + 0.5) * step;
     return position;
 }
 
 void PMPrimaryGenerator::GeneratePrimaries(G4Event* anEvent)
 {
-    // Быстрая проверка флага
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
     if (fIsFinished.load()) {
         return;
     }
@@ -76,7 +92,7 @@ void PMPrimaryGenerator::GeneratePrimaries(G4Event* anEvent)
     G4bool shouldGenerate = false;
     G4bool needAbort = false;
 
-    // Критическая секция для обновления позиции
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     {
         G4AutoLock lock(&pixelMutex);
 
@@ -87,7 +103,7 @@ void PMPrimaryGenerator::GeneratePrimaries(G4Event* anEvent)
         G4int particlesInPixel = fParticlesEmittedInCurrentPixel.load();
 
         if (particlesInPixel >= fParticlesPerPixel) {
-            // Переходим к следующему пикселю
+            // РџРµСЂРµС…РѕРґРёРј Рє СЃР»РµРґСѓСЋС‰РµРјСѓ РїРёРєСЃРµР»СЋ
             fParticlesEmittedInCurrentPixel = 0;
             currentX++;
 
@@ -97,11 +113,9 @@ void PMPrimaryGenerator::GeneratePrimaries(G4Event* anEvent)
 
                 if (currentY >= fGridSize) {
                     fIsFinished = true;
-                    G4cout << "Thread " << G4Threading::G4GetThreadId()
-                        << ": All pixels processed." << G4endl;
+                    G4cout << "[Progress] 100% вЂ” РІСЃРµ РїРёРєСЃРµР»Рё РѕР±СЂР°Р±РѕС‚Р°РЅС‹." << G4endl;
                     needAbort = true;
                     lock.unlock();
-                    // Запрашиваем остановку
                     G4RunManager::GetRunManager()->AbortRun();
                     return;
                 }
@@ -109,40 +123,38 @@ void PMPrimaryGenerator::GeneratePrimaries(G4Event* anEvent)
 
             fGlobalPixelX = currentX;
             fGlobalPixelY = currentY;
+
+            // РџСЂРѕРіСЂРµСЃСЃ-РёРЅРґРёРєР°С‚РѕСЂ: РІС‹РІРѕРґ РєР°Р¶РґС‹Рµ 10%
+            const G4int totalPixels = fGridSize * fGridSize;
+            const G4int progressStep = totalPixels / 10;  // РєР°Р¶РґС‹Рµ 10%
+            G4int pixelsDone = currentY * fGridSize + currentX;
+            if (progressStep > 0 && pixelsDone % progressStep == 0 && pixelsDone > 0) {
+                G4int percent = (pixelsDone * 100) / totalPixels;
+                G4cout << "[Progress] " << percent << "% ("
+                       << pixelsDone << "/" << totalPixels << " РїРёРєСЃРµР»РµР№)" << G4endl;
+            }
         }
 
-        // Увеличиваем счетчик
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
         fParticlesEmittedInCurrentPixel++;
         shouldGenerate = true;
     }
 
-    // Генерируем событие только если не завершили
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     if (shouldGenerate && !fIsFinished.load()) {
-        // Используем ТУ ЖЕ САМУЮ формулу, что и в SensitiveDetector
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅ пїЅ пїЅ SensitiveDetector
         const G4double range = 5.0/100 * cm;   
-        const G4int numBins = fGridSize;           // 25 бинов
+        const G4int numBins = fGridSize;           // 25 пїЅпїЅпїЅпїЅпїЅ
 
-        // Вычисляем центр бина детектора
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
         G4double x = GetDetectorBinCenter(currentX, range, numBins);
         G4double y = GetDetectorBinCenter(currentY, range, numBins);
 
         SetSourcePosition(x, y);
         energy = fParticleGun->GetParticleEnergy();
 
-        // Генерируем вершину
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
         fParticleGun->GeneratePrimaryVertex(anEvent);
 
-        // Логирование
-        static G4ThreadLocal G4int lastPixelX = -1;
-        static G4ThreadLocal G4int lastPixelY = -1;
-
-        if (lastPixelX != currentX || lastPixelY != currentY) {
-            lastPixelX = currentX;
-            lastPixelY = currentY;
-            G4cout << "Thread " << G4Threading::G4GetThreadId()
-                << " processing pixel [" << currentX << "," << currentY
-                << "] at (" << x / cm << " cm, " << y / cm << " cm)"
-                << G4endl;
-        }
     }
 }
